@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0b0b0f">
+    <title>Painel Live • {{ host_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <span class="live-dot"></span>
+            <h1>PAINEL <span class="neon">LIVE</span></h1>
+        </div>
+        <div class="status-pill" id="statusPill">Pronto</div>
+    </header>
+
+    <main class="layout">
+        <!-- COLUNA ESQUERDA: entrada + resposta + áudio -->
+        <section class="col col-main">
+
+            <div class="card">
+                <h2 class="card-title">Simular chat</h2>
+                <form id="chatForm" autocomplete="off">
+                    <label class="field">
+                        <span>Nome do espectador</span>
+                        <input type="text" id="viewerName" maxlength="40" placeholder="@usuario" value="Visitante">
+                    </label>
+
+                    <label class="field">
+                        <span>Mensagem</span>
+                        <textarea id="viewerMessage" rows="3" maxlength="500" placeholder="Digite um comentário do chat..."></textarea>
+                    </label>
+
+                    <div class="chips" id="chips">
+                        <button type="button" class="chip" data-text="Oi! Tudo bem com você?">Oi!</button>
+                        <button type="button" class="chip" data-text="Conta uma piada pra gente!">Piada</button>
+                        <button type="button" class="chip" data-text="Qual é o seu nome e o que você faz aqui?">Quem é você?</button>
+                        <button type="button" class="chip" data-text="Vou seguir o canal, pode dar um salve?">Salve!</button>
+                    </div>
+
+                    <div class="row-actions">
+                        <label class="switch">
+                            <input type="checkbox" id="voiceToggle" checked>
+                            <span class="slider"></span>
+                            <span class="switch-label">Voz</span>
+                        </label>
+                        <button type="submit" class="btn btn-primary" id="sendBtn">Enviar</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="card card-response">
+                <h2 class="card-title">Resposta de {{ host_name }}</h2>
+                <div class="response-box" id="responseBox">
+                    <p class="placeholder" id="responsePlaceholder">Aguardando uma mensagem do chat...</p>
+                    <p id="responseText" class="response-text hidden"></p>
+                    <div class="typing hidden" id="typing">
+                        <span></span><span></span><span></span>
+                    </div>
+                </div>
+                <p class="error-msg hidden" id="errorMsg"></p>
+
+                <div class="audio-wrap">
+                    <span class="audio-label">Player de voz</span>
+                    <audio id="player" controls preload="auto"></audio>
+                </div>
+            </div>
+        </section>
+
+        <!-- COLUNA DIREITA: feed -->
+        <section class="col col-feed">
+            <div class="card card-feed">
+                <div class="card-head">
+                    <h2 class="card-title">Feed do chat</h2>
+                    <button type="button" class="btn btn-ghost" id="clearBtn">Limpar</button>
+                </div>
+                <div class="feed" id="feed">
+                    <p class="placeholder" id="feedEmpty">Nenhum comentário ainda.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const $ = (id) => document.getElementById(id);
+
+        const form = $("chatForm");
+        const nameInput = $("viewerName");
+        const messageInput = $("viewerMessage");
+        const sendBtn = $("sendBtn");
+        const voiceToggle = $("voiceToggle");
+        const player = $("player");
+        const statusPill = $("statusPill");
+        const responseText = $("responseText");
+        const responsePlaceholder = $("responsePlaceholder");
+        const typing = $("typing");
+        const errorMsg = $("errorMsg");
+        const feed = $("feed");
+        const feedEmpty = $("feedEmpty");
+        const clearBtn = $("clearBtn");
+        const chips = $("chips");
+
+        let audioUnlocked = false;
+
+        function setStatus(text, mode) {
+            statusPill.textContent = text;
+            statusPill.className = "status-pill" + (mode ? " " + mode : "");
+        }
+
+        // Desbloqueia o áudio no primeiro toque (exigência dos navegadores de celular)
+        function unlockAudio() {
+            if (audioUnlocked) return;
+            player.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+            const attempt = player.play();
+            if (attempt && attempt.then) {
+                attempt.then(() => {
+                    player.pause();
+                    audioUnlocked = true;
+                }).catch(() => {});
+            }
+        }
+
+        function showError(text) {
+            errorMsg.textContent = text;
+            errorMsg.classList.remove("hidden");
+        }
+
+        function hideError() {
+            errorMsg.textContent = "";
+            errorMsg.classList.add("hidden");
+        }
+
+        function showTyping(on) {
+            if (on) {
+                responsePlaceholder.classList.add("hidden");
+                responseText.classList.add("hidden");
+                typing.classList.remove("hidden");
+            } else {
+                typing.classList.add("hidden");
+            }
+        }
+
+        function showResponse(text) {
+            responsePlaceholder.classList.add("hidden");
+            responseText.textContent = text;
+            responseText.classList.remove("hidden");
+        }
+
+        function createFeedItem(entry) {
+            const item = document.createElement("article");
+            item.className = "feed-item";
+
+            const head = document.createElement("div");
+            head.className = "feed-head";
+
+            const avatar = document.createElement("span");
+            avatar.className = "avatar";
+            avatar.textContent = (entry.name || "?").trim().charAt(0).toUpperCase() || "?";
+
+            const who = document.createElement("span");
+            who.className = "who";
+            who.textContent = entry.name;
+
+            const time = document.createElement("span");
+            time.className = "time";
+            time.textContent = entry.time;
+
+            head.appendChild(avatar);
+            head.appendChild(who);
+            head.appendChild(time);
+
+            const msg = document.createElement("p");
+            msg.className = "feed-msg";
+            msg.textContent = entry.message;
+
+            const reply = document.createElement("p");
+            reply.className = "feed-reply";
+            const tag = document.createElement("strong");
+            tag.textContent = "{{ host_name }}: ";
+            reply.appendChild(tag);
+            reply.appendChild(document.createTextNode(entry.reply));
+
+            item.appendChild(head);
+            item.appendChild(msg);
+            item.appendChild(reply);
+            return item;
+        }
+
+        function addToFeed(entry, prepend) {
+            feedEmpty.classList.add("hidden");
+            const item = createFeedItem(entry);
+            if (prepend) {
+                feed.insertBefore(item, feed.firstChild);
+            } else {
+                feed.appendChild(item);
+            }
+        }
+
+        async function loadHistory() {
+            try {
+                const res = await fetch("/api/history");
+                const data = await res.json();
+                const items = (data.history || []).slice().reverse();
+                items.forEach((entry) => addToFeed(entry, false));
+                if (items.length > 0) {
+                    showResponse(items[0].reply);
+                }
+            } catch (err) {
+                /* ignora: o feed começa vazio */
+            }
+        }
+
+        async function sendMessage(event) {
+            event.preventDefault();
+            unlockAudio();
+            hideError();
+
+            const message = messageInput.value.trim();
+            if (!message) {
+                showError("Digite uma mensagem antes de enviar.");
+                return;
+            }
+
+            sendBtn.disabled = true;
+            setStatus("Gerando resposta...", "busy");
+            showTyping(true);
+
+            try {
+                const res = await fetch("/api/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        name: nameInput.value.trim() || "Visitante",
+                        message: message,
+                        voice: voiceToggle.checked
+                    })
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.error || "Erro desconhecido no servidor.");
+                }
+
+                showTyping(false);
+                showResponse(data.entry.reply);
+                addToFeed(data.entry, true);
+                messageInput.value = "";
+
+                if (data.audio) {
+                    player.src = "data:audio/mpeg;base64," + data.audio;
+                    player.play().catch(() => {
+                        showError("O navegador bloqueou o autoplay. Toque no play do player para ouvir.");
+                        setStatus("Pronto", "");
+                    });
+                } else {
+                    setStatus("Pronto", "");
+                    if (data.audio_error) {
+                        showError("Áudio indisponível: " + data.audio_error);
+                    }
+                }
+            } catch (err) {
+                showTyping(false);
+                showError(err.message);
+                setStatus("Erro", "error");
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        player.addEventListener("play", () => {
+            if (audioUnlocked && player.src.indexOf("audio/mpeg") !== -1) {
+                setStatus("Falando...", "speaking");
+            }
+        });
+        player.addEventListener("ended", () => setStatus("Pronto", ""));
+        player.addEventListener("pause", () => {
+            if (player.ended || player.currentTime === 0) return;
+            setStatus("Pronto", "");
+        });
+
+        chips.addEventListener("click", (event) => {
+            const btn = event.target.closest(".chip");
+            if (!btn) return;
+            messageInput.value = btn.dataset.text;
+            messageInput.focus();
+        });
+
+        clearBtn.addEventListener("click", async () => {
+            try {
+                await fetch("/api/clear", { method: "POST" });
+            } catch (err) {
+                /* ignora */
+            }
+            feed.querySelectorAll(".feed-item").forEach((el) => el.remove());
+            feedEmpty.classList.remove("hidden");
+        });
+
+        messageInput.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                form.requestSubmit();
+            }
+        });
+
+        form.addEventListener("submit", sendMessage);
+        loadHistory();
+    </script>
+</body>
+</html>
